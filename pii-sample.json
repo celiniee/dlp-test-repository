@@ -1,0 +1,16 @@
+{
+    "user_id": "XY9876a6oPQikZA3u_qjNKtp7uUIdHhh",
+    "first_name": "John",
+    "last_name": "Doe",
+    "email": "johndoe@example.com",
+    "phone_number": "+1-234-567-8901",
+    "address": {
+      "street": "123 Main St",
+      "city": "Anytown",
+      "state": "CA",
+      "zip_code": "90210",
+      "country": "USA"
+    },
+    "date_of_birth": "1990-01-01",
+    "ssn": "123-45-6789"
+  }
