@@ -7,10 +7,10 @@
     "address": {
       "street": "123 Main St",
       "city": "Anytown",
-      "state": "CA",
+      "state": "California",
       "zip_code": "90210",
       "country": "USA"
     },
     "date_of_birth": "1990-01-01",
-    "ssn": "123-45-6789"
+    "ssn": "123-45-2930"
   }
