@@ -32,27 +32,46 @@ func DLPScan(projectID, text string) error {
 	}
 	defer client.Close()
 
-	req := &dlppb.InspectContentRequest{
-		Parent: fmt.Sprintf("projects/%s", projectID),
-		Item: &dlppb.ContentItem{
-			DataItem: &dlppb.ContentItem_Value{Value: text},
-		},
-		InspectConfig: &dlppb.InspectConfig{
-			InfoTypes: []*dlppb.InfoType{
-				{Name: "EMAIL_ADDRESS"},
-				{Name: "PHONE_NUMBER"},
-				{Name: "US_SOCIAL_SECURITY_NUMBER"},
-				{Name: "CREDIT_CARD_NUMBER"},
-			},
-			MinLikelihood: dlppb.Likelihood_POSSIBLE,
-		},
+	// Custom regex pattern for additional sensitive data detection
+	customRegexPattern := "XY[0-9]{4}.*"
+	customInfoType := &dlppb.CustomInfoType{
+		InfoType: &dlppb.InfoType{Name: "RampID"},
+		Type: &dlppb.CustomInfoType_Regex_{Regex: &dlppb.CustomInfoType_Regex{
+			Pattern: customRegexPattern,
+		}},
+		Likelihood: dlppb.Likelihood_POSSIBLE,
 	}
 
+	// Configuration for DLP scan including standard and custom info types
+	inspectConfig := &dlppb.InspectConfig{
+		InfoTypes: []*dlppb.InfoType{
+			{Name: "EMAIL_ADDRESS"},
+			{Name: "PHONE_NUMBER"},
+			{Name: "US_SOCIAL_SECURITY_NUMBER"},
+		},
+		CustomInfoTypes: []*dlppb.CustomInfoType{customInfoType},
+		IncludeQuote:    true,
+	}
+
+	// Define the content item to be inspected
+	contentItem := &dlppb.ContentItem{
+		DataItem: &dlppb.ContentItem_Value{Value: text},
+	}
+
+	// Create the inspection request
+	req := &dlppb.InspectContentRequest{
+		Parent:        fmt.Sprintf("projects/%s/locations/global", projectID),
+		Item:          contentItem,
+		InspectConfig: inspectConfig,
+	}
+
+	// Execute the DLP scan
 	resp, err := client.InspectContent(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to inspect content: %v", err)
 	}
 
+	// Check for findings
 	if len(resp.Result.Findings) > 0 {
 		fmt.Println("Sensitive data detected:")
 		for _, finding := range resp.Result.Findings {
