@@ -66,7 +66,6 @@ func DLPScan(projectID, text string) (bool, error) {
 		return false, fmt.Errorf("failed to inspect content: %v", err)
 	}
 
-	// If any findings are present, return true for sensitive data found
 	return len(resp.Result.Findings) > 0, nil
 }
 
@@ -76,15 +75,8 @@ func SetGitExtraHeader() {
 	fmt.Println("Set GIT_HTTP_EXTRAHEADER environment variable.")
 }
 
-// ClearGitExtraHeader clears the GIT_HTTP_EXTRAHEADER environment variable
-func ClearGitExtraHeader() {
-	os.Unsetenv("GIT_HTTP_EXTRAHEADER")
-	fmt.Println("Cleared GIT_HTTP_EXTRAHEADER environment variable.")
-}
-
 // RunGitPush performs the git push command, setting upstream if needed
 func RunGitPush() error {
-	// Get the current branch name
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	branchBytes, err := cmd.Output()
 	if err != nil {
@@ -92,74 +84,70 @@ func RunGitPush() error {
 	}
 	branchName := strings.TrimSpace(string(branchBytes))
 
-	// Check if the current branch has an upstream branch
-	cmd = exec.Command("git", "rev-parse", "--abbrev-ref", branchName+"@{upstream}")
+	cmd = exec.Command("git", "push", "--set-upstream", "origin", branchName)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
 	if err := cmd.Run(); err != nil {
-		// If no upstream is set, configure it
-		fmt.Printf("No upstream branch set for %s. Setting upstream and pushing.\n", branchName)
-		cmd = exec.Command("git", "push", "--set-upstream", "origin", branchName)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to set upstream and push: %v", err)
-		}
-	} else {
-		// If upstream is set, perform a regular push
-		cmd = exec.Command("git", "push")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("git push failed: %v", err)
-		}
+		return fmt.Errorf("git push failed: %v", err)
 	}
 	return nil
 }
 
-// ScanFile reads file content, performs a DLP scan, and runs Git push with an extra header if no sensitive data is found
-func ScanFile(filename, projectID string) error {
+// ScanFile reads file content, performs a DLP scan, and sets HTTP header if no sensitive data is found
+func ScanFile(filename, projectID string) (bool, error) {
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
-		return fmt.Errorf("could not read file: %v", err)
+		return false, fmt.Errorf("could not read file: %v", err)
 	}
 
-	// Perform DLP scan
 	foundSensitiveData, err := DLPScan(projectID, string(data))
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if !foundSensitiveData {
-		fmt.Printf("No sensitive data found in file %s. Proceeding with git push.\n", filename)
-		SetGitExtraHeader()
-		defer ClearGitExtraHeader() // Ensure the environment variable is cleared after use
-		if err := RunGitPush(); err != nil {
-			return err
-		}
-	} else {
-		fmt.Printf("Sensitive data found in file %s. Skipping git push.\n", filename)
-	}
-
-	return nil
+	return !foundSensitiveData, nil
 }
 
 func main() {
 	projectID := "datalake-sea-eng-us-cert"
-
 	files, err := GetChangedFiles()
 	if err != nil {
 		fmt.Printf("Error retrieving changed files: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Track if all files are clean
+	allFilesClean := true
 	for _, file := range files {
 		if file == "" {
 			continue
 		}
 		fmt.Printf("Scanning file: %s\n", file)
-		if err := ScanFile(file, projectID); err != nil {
+		fileClean, err := ScanFile(file, projectID)
+		if err != nil {
 			fmt.Printf("Scan error: %v\n", err)
-			os.Exit(1) // Exit with non-zero status to block push
+			os.Exit(1)
+		}
+		if !fileClean {
+			fmt.Printf("Sensitive data found in file %s. Skipping git push.\n", file)
+			allFilesClean = false
+			break
 		}
 	}
-	fmt.Println("DLP scan complete.")
+
+	if allFilesClean {
+		// Set the custom HTTP header and perform the push
+		SetGitExtraHeader()
+		defer os.Unsetenv("GIT_HTTP_EXTRAHEADER")
+		if err := RunGitPush(); err != nil {
+			fmt.Printf("Push failed: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Println("Sensitive data detected, aborting push.")
+		os.Exit(1)
+	}
+
+	fmt.Println("DLP scan complete, push successful.")
 }
