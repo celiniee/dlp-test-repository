@@ -82,15 +82,35 @@ func ClearGitExtraHeader() {
 	fmt.Println("Cleared GIT_HTTP_EXTRAHEADER environment variable.")
 }
 
-// RunGitPush performs the git push command
+// RunGitPush performs the git push command, setting upstream if needed
 func RunGitPush() error {
-	cmd := exec.Command("git", "push")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Get the current branch name
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	branchBytes, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get current branch name: %v", err)
+	}
+	branchName := strings.TrimSpace(string(branchBytes))
 
-	// Run the command with the environment variable set
+	// Check if the current branch has an upstream branch
+	cmd = exec.Command("git", "rev-parse", "--abbrev-ref", branchName+"@{upstream}")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git push failed: %v", err)
+		// If no upstream is set, configure it
+		fmt.Printf("No upstream branch set for %s. Setting upstream and pushing.\n", branchName)
+		cmd = exec.Command("git", "push", "--set-upstream", "origin", branchName)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to set upstream and push: %v", err)
+		}
+	} else {
+		// If upstream is set, perform a regular push
+		cmd = exec.Command("git", "push")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("git push failed: %v", err)
+		}
 	}
 	return nil
 }
