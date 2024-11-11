@@ -12,12 +12,13 @@ import (
 	dlppb "google.golang.org/genproto/googleapis/privacy/dlp/v2"
 )
 
-// GetStagedFiles retrieves the list of staged files in the Git index
-func GetStagedFiles() ([]string, error) {
-	cmd := exec.Command("git", "diff", "--cached", "--name-only")
+// GetChangedFiles retrieves the list of files changed in the latest commit
+func GetChangedFiles() ([]string, error) {
+	// Get the list of files changed in the last commit
+	cmd := exec.Command("git", "diff", "--name-only", "HEAD~1", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get staged files: %v", err)
+		return nil, fmt.Errorf("failed to get changed files: %v", err)
 	}
 	files := strings.Split(strings.TrimSpace(string(output)), "\n")
 	return files, nil
@@ -95,9 +96,9 @@ func ScanFile(filename, projectID string) error {
 func main() {
 	projectID := "datalake-sea-eng-us-cert"
 
-	files, err := GetStagedFiles()
+	files, err := GetChangedFiles()
 	if err != nil {
-		fmt.Printf("Error retrieving staged files: %v\n", err)
+		fmt.Printf("Error retrieving changed files: %v\n", err)
 		os.Exit(1)
 	}
 
