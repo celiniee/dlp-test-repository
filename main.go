@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,7 +15,6 @@ import (
 
 // GetChangedFiles retrieves the list of files changed in the latest commit
 func GetChangedFiles() ([]string, error) {
-	// Get the list of files changed in the last commit
 	cmd := exec.Command("git", "diff", "--name-only", "HEAD~1", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
@@ -25,15 +25,14 @@ func GetChangedFiles() ([]string, error) {
 }
 
 // DLPScan scans a given text for sensitive data using Google Cloud DLP
-func DLPScan(projectID, text string) error {
+func DLPScan(projectID, text string) (bool, error) {
 	ctx := context.Background()
 	client, err := dlp.NewClient(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create DLP client: %v", err)
+		return false, fmt.Errorf("failed to create DLP client: %v", err)
 	}
 	defer client.Close()
 
-	// Custom regex pattern for additional sensitive data detection
 	customRegexPattern := "XY[0-9]{4}.*"
 	customInfoType := &dlppb.CustomInfoType{
 		InfoType: &dlppb.InfoType{Name: "RampID"},
@@ -43,7 +42,6 @@ func DLPScan(projectID, text string) error {
 		Likelihood: dlppb.Likelihood_POSSIBLE,
 	}
 
-	// Configuration for DLP scan including standard and custom info types
 	inspectConfig := &dlppb.InspectConfig{
 		InfoTypes: []*dlppb.InfoType{
 			{Name: "EMAIL_ADDRESS"},
@@ -54,47 +52,77 @@ func DLPScan(projectID, text string) error {
 		IncludeQuote:    true,
 	}
 
-	// Define the content item to be inspected
 	contentItem := &dlppb.ContentItem{
 		DataItem: &dlppb.ContentItem_Value{Value: text},
 	}
 
-	// Create the inspection request
 	req := &dlppb.InspectContentRequest{
 		Parent:        fmt.Sprintf("projects/%s/locations/global", projectID),
 		Item:          contentItem,
 		InspectConfig: inspectConfig,
 	}
 
-	// Execute the DLP scan
 	resp, err := client.InspectContent(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to inspect content: %v", err)
+		return false, fmt.Errorf("failed to inspect content: %v", err)
 	}
 
-	// Check for findings
 	if len(resp.Result.Findings) > 0 {
 		fmt.Println("Sensitive data detected:")
 		for _, finding := range resp.Result.Findings {
 			fmt.Printf(" - %s\n", finding.InfoType.Name)
 		}
-		return fmt.Errorf("sensitive data found")
+		return true, nil
+	}
+	return false, nil
+}
+
+// ProxyCheck makes a POST request to a specified HTTP proxy with a custom "DLP-scanned" header and prints the status code
+func ProxyCheck(proxyURL string) error {
+	req, err := http.NewRequest("POST", proxyURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %v", err)
 	}
 
+	// Add custom header
+	req.Header.Set("DLP-scanned", "true")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send HTTP request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Print status code to see if the proxy allows the request
+	fmt.Printf("Proxy response status code: %d\n", resp.StatusCode)
 	return nil
 }
 
-// ScanFile reads file content and performs a DLP scan
-func ScanFile(filename, projectID string) error {
+// ScanFile reads file content, performs a DLP scan, and checks proxy if sensitive data is found
+func ScanFile(filename, projectID, proxyURL string) error {
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("could not read file: %v", err)
 	}
-	return DLPScan(projectID, string(data))
+
+	foundSensitiveData, err := DLPScan(projectID, string(data))
+	if err != nil {
+		return err
+	}
+	if foundSensitiveData {
+		// Call ProxyCheck if sensitive data is found
+		if err := ProxyCheck(proxyURL); err != nil {
+			return fmt.Errorf("proxy check failed for file %s: %v", filename, err)
+		}
+		return fmt.Errorf("sensitive data found in file %s", filename)
+	}
+	return nil
 }
 
 func main() {
 	projectID := "datalake-sea-eng-us-cert"
+	proxyURL := "https://10.13.48.89:80" // Replace with your proxy URL
 
 	files, err := GetChangedFiles()
 	if err != nil {
@@ -107,7 +135,7 @@ func main() {
 			continue
 		}
 		fmt.Printf("Scanning file: %s\n", file)
-		if err := ScanFile(file, projectID); err != nil {
+		if err := ScanFile(file, projectID, proxyURL); err != nil {
 			fmt.Printf("Scan error: %v\n", err)
 			os.Exit(1) // Exit with non-zero status to block push
 		}
