@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -17,10 +18,10 @@ func GetUnpushedCommits() ([]string, error) {
 	// Check if the branch has an upstream set
 	checkUpstream := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	if err := checkUpstream.Run(); err != nil {
-		return nil, fmt.Errorf("No upstream branch set for the current branch. Please set upstream before pushing!")
+		return nil, fmt.Errorf("no upstream branch set for the current branch. Please set upstream before pushing.")
 	}
 
-	// If upstream exists, get unpushed commits
+	// Get unpushed commits if upstream exists
 	cmd := exec.Command("git", "rev-list", "--oneline", "@{u}..HEAD")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -120,6 +121,33 @@ func ScanCommit(commit, projectID string) (bool, error) {
 	return false, nil
 }
 
+// ScanFinalState scans the latest version of each file as of HEAD for sensitive data
+func ScanFinalState(projectID string) (bool, error) {
+	cmd := exec.Command("git", "ls-files")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("failed to list files: %v", err)
+	}
+
+	files := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, file := range files {
+		data, err := ioutil.ReadFile(file)
+		if err != nil {
+			return false, fmt.Errorf("could not read file %s: %v", file, err)
+		}
+		foundSensitiveData, err := DLPScan(projectID, string(data))
+		if err != nil {
+			return false, err
+		}
+		if foundSensitiveData {
+			fmt.Printf("Sensitive data found in final state of file %s. Aborting push.\n", file)
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 func main() {
 	projectID := "datalake-sea-eng-us-cert"
 
@@ -133,6 +161,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Step 1: Scan each commit in the range for sensitive data
 	for _, commit := range commits {
 		fmt.Printf("Scanning commit: %s\n", commit)
 		foundSensitiveData, err := ScanCommit(commit, projectID)
@@ -141,8 +170,19 @@ func main() {
 			os.Exit(1)
 		}
 		if foundSensitiveData {
-			os.Exit(1) // Exit with non-zero status to block push if sensitive data is found
+			os.Exit(1) // Exit if sensitive data is found in any commit
 		}
+	}
+
+	// Step 2: Perform a final scan on the latest file states at HEAD
+	fmt.Println("Performing final DLP scan on latest file states...")
+	foundSensitiveData, err := ScanFinalState(projectID)
+	if err != nil {
+		fmt.Printf("Final state scan error: %v\n", err)
+		os.Exit(1)
+	}
+	if foundSensitiveData {
+		os.Exit(1) // Exit if sensitive data is found in the final state
 	}
 
 	fmt.Println("DLP scan complete, no sensitive data found.")
