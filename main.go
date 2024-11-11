@@ -12,13 +12,13 @@ import (
 	dlppb "google.golang.org/genproto/googleapis/privacy/dlp/v2"
 )
 
-// GetCommitsToPush identifies all commits in the push range
-func GetCommitsToPush() ([]string, error) {
+// GetUnpushedCommits retrieves all unpushed commits from the upstream branch to HEAD
+func GetUnpushedCommits() ([]string, error) {
 	cmd := exec.Command("git", "rev-list", "--oneline", "@{u}..HEAD")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to get commits to push: %v", err)
+		return nil, fmt.Errorf("failed to get unpushed commits: %v", err)
 	}
 	commitLines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	var commits []string
@@ -118,13 +118,11 @@ func main() {
 
 	// Set the GIT_HTTP_EXTRAHEADER environment variable
 	os.Setenv("GIT_HTTP_EXTRAHEADER", "DLP-Scanned: true")
-	fmt.Printf("HTTP Header added")
 	defer os.Unsetenv("GIT_HTTP_EXTRAHEADER") // Ensure it is unset after execution
-	fmt.Printf("HTTP Header removed")
 
-	commits, err := GetCommitsToPush()
+	commits, err := GetUnpushedCommits()
 	if err != nil {
-		fmt.Printf("Error retrieving commits to push: %v\n", err)
+		fmt.Printf("Error retrieving unpushed commits: %v\n", err)
 		os.Exit(1)
 	}
 
