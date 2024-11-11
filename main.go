@@ -69,32 +69,7 @@ func DLPScan(projectID, text string) (bool, error) {
 	return len(resp.Result.Findings) > 0, nil
 }
 
-// SetGitExtraHeader sets the GIT_HTTP_EXTRAHEADER environment variable
-func SetGitExtraHeader() {
-	os.Setenv("GIT_HTTP_EXTRAHEADER", "DLP-Scanned: true")
-	fmt.Println("Set GIT_HTTP_EXTRAHEADER environment variable.")
-}
-
-// RunGitPush performs the git push command, setting upstream if needed
-func RunGitPush() error {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	branchBytes, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to get current branch name: %v", err)
-	}
-	branchName := strings.TrimSpace(string(branchBytes))
-
-	cmd = exec.Command("git", "push", "--set-upstream", "origin", branchName)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git push failed: %v", err)
-	}
-	return nil
-}
-
-// ScanFile reads file content, performs a DLP scan, and sets HTTP header if no sensitive data is found
+// ScanFile reads file content and performs a DLP scan, returning whether sensitive data was found
 func ScanFile(filename, projectID string) (bool, error) {
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
@@ -106,7 +81,7 @@ func ScanFile(filename, projectID string) (bool, error) {
 		return false, err
 	}
 
-	return !foundSensitiveData, nil
+	return foundSensitiveData, nil
 }
 
 func main() {
@@ -117,37 +92,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Track if all files are clean
-	allFilesClean := true
 	for _, file := range files {
 		if file == "" {
 			continue
 		}
 		fmt.Printf("Scanning file: %s\n", file)
-		fileClean, err := ScanFile(file, projectID)
+		foundSensitiveData, err := ScanFile(file, projectID)
 		if err != nil {
 			fmt.Printf("Scan error: %v\n", err)
 			os.Exit(1)
 		}
-		if !fileClean {
-			fmt.Printf("Sensitive data found in file %s. Skipping git push.\n", file)
-			allFilesClean = false
-			break
+		if foundSensitiveData {
+			fmt.Printf("Sensitive data found in file %s. Aborting push.\n", file)
+			os.Exit(1) // Exit with non-zero status to block push
 		}
 	}
 
-	if allFilesClean {
-		// Set the custom HTTP header and perform the push
-		SetGitExtraHeader()
-		defer os.Unsetenv("GIT_HTTP_EXTRAHEADER")
-		if err := RunGitPush(); err != nil {
-			fmt.Printf("Push failed: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		fmt.Println("Sensitive data detected, aborting push.")
-		os.Exit(1)
-	}
-
-	fmt.Println("DLP scan complete, push successful.")
+	fmt.Println("DLP scan complete, no sensitive data found.")
 }
