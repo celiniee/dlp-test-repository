@@ -86,6 +86,11 @@ func ScanFile(filename, projectID string) (bool, error) {
 
 func main() {
 	projectID := "datalake-sea-eng-us-cert"
+
+	// Set the GIT_HTTP_EXTRAHEADER environment variable
+	os.Setenv("GIT_HTTP_EXTRAHEADER", "DLP-Scanned: true")
+	defer os.Unsetenv("GIT_HTTP_EXTRAHEADER") // Ensure it is unset after execution
+
 	files, err := GetChangedFiles()
 	if err != nil {
 		fmt.Printf("Error retrieving changed files: %v\n", err)
