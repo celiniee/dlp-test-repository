@@ -3,6 +3,8 @@
   "id": "XY4321tyui",
   "first_name": "John",
   "last_name": "Doenut",
+  "email": "john@example.com",
+  "phone_number": "+1-234-567-8901",
   "address": {
     "street": "123 Main St",
     "city": "Anytown",
