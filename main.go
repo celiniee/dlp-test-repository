@@ -118,7 +118,9 @@ func main() {
 
 	// Set the GIT_HTTP_EXTRAHEADER environment variable
 	os.Setenv("GIT_HTTP_EXTRAHEADER", "DLP-Scanned: true")
+	fmt.Printf("HTTP Header added")
 	defer os.Unsetenv("GIT_HTTP_EXTRAHEADER") // Ensure it is unset after execution
+	fmt.Printf("HTTP Header removed")
 
 	commits, err := GetCommitsToPush()
 	if err != nil {
