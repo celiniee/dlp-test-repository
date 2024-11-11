@@ -14,6 +14,13 @@ import (
 
 // GetUnpushedCommits retrieves all unpushed commits from the upstream branch to HEAD
 func GetUnpushedCommits() ([]string, error) {
+	// Check if the branch has an upstream set
+	checkUpstream := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	if err := checkUpstream.Run(); err != nil {
+		return nil, fmt.Errorf("no upstream branch set for the current branch. Please set upstream before pushing.")
+	}
+
+	// If upstream exists, get unpushed commits
 	cmd := exec.Command("git", "rev-list", "--oneline", "@{u}..HEAD")
 	var out bytes.Buffer
 	cmd.Stdout = &out
