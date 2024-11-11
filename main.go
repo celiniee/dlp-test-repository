@@ -21,7 +21,7 @@ func GetUnpushedCommits() ([]string, error) {
 		return nil, fmt.Errorf("no upstream branch set for the current branch. Please set upstream before pushing.")
 	}
 
-	// Get unpushed commits if upstream exists
+	// If upstream exists, get unpushed commits
 	cmd := exec.Command("git", "rev-list", "--oneline", "@{u}..HEAD")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -96,41 +96,34 @@ func DLPScan(projectID, text string) (bool, error) {
 }
 
 // ScanCommit checks each file in a specific commit for sensitive data
-func ScanCommit(commit, projectID string) (bool, error) {
+func ScanCommit(commit, projectID string, flaggedFiles map[string]bool) error {
 	files, err := GetChangedFilesInCommit(commit)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	for _, file := range files {
 		cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", commit, file))
 		output, err := cmd.Output()
 		if err != nil {
-			return false, fmt.Errorf("failed to get content of file %s in commit %s: %v", file, commit, err)
+			return fmt.Errorf("failed to get content of file %s in commit %s: %v", file, commit, err)
 		}
 		foundSensitiveData, err := DLPScan(projectID, string(output))
 		if err != nil {
-			return false, err
+			return err
 		}
 		if foundSensitiveData {
-			fmt.Printf("Sensitive data found in file %s in commit %s. Aborting push.\n", file, commit)
-			return true, nil
+			flaggedFiles[file] = true
+			fmt.Printf("Sensitive data found in file %s in commit %s.\n", file, commit)
 		}
 	}
 
-	return false, nil
+	return nil
 }
 
-// ScanFinalState scans the latest version of each file as of HEAD for sensitive data
-func ScanFinalState(projectID string) (bool, error) {
-	cmd := exec.Command("git", "ls-files")
-	output, err := cmd.Output()
-	if err != nil {
-		return false, fmt.Errorf("failed to list files: %v", err)
-	}
-
-	files := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, file := range files {
+// ScanFinalState scans the latest version of flagged files at HEAD for sensitive data
+func ScanFinalState(projectID string, flaggedFiles map[string]bool) (bool, error) {
+	for file := range flaggedFiles {
 		data, err := ioutil.ReadFile(file)
 		if err != nil {
 			return false, fmt.Errorf("could not read file %s: %v", file, err)
@@ -161,22 +154,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Step 1: Scan each commit in the range for sensitive data
+	// Step 1: Scan each commit in the range to track files with sensitive data
+	flaggedFiles := make(map[string]bool)
 	for _, commit := range commits {
 		fmt.Printf("Scanning commit: %s\n", commit)
-		foundSensitiveData, err := ScanCommit(commit, projectID)
+		err := ScanCommit(commit, projectID, flaggedFiles)
 		if err != nil {
 			fmt.Printf("Scan error in commit %s: %v\n", commit, err)
 			os.Exit(1)
 		}
-		if foundSensitiveData {
-			os.Exit(1) // Exit if sensitive data is found in any commit
-		}
 	}
 
-	// Step 2: Perform a final scan on the latest file states at HEAD
-	fmt.Println("Performing final DLP scan on latest file states...")
-	foundSensitiveData, err := ScanFinalState(projectID)
+	// Step 2: Perform a final scan on the latest file states at HEAD for flagged files only
+	fmt.Println("Performing final DLP scan on latest flagged file states...")
+	foundSensitiveData, err := ScanFinalState(projectID, flaggedFiles)
 	if err != nil {
 		fmt.Printf("Final state scan error: %v\n", err)
 		os.Exit(1)
