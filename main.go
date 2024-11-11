@@ -17,7 +17,7 @@ func GetUnpushedCommits() ([]string, error) {
 	// Check if the branch has an upstream set
 	checkUpstream := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	if err := checkUpstream.Run(); err != nil {
-		return nil, fmt.Errorf("No upstream branch set for the current branch. Please set upstream before pushing.")
+		return nil, fmt.Errorf("No upstream branch set for the current branch. Please set upstream before pushing!")
 	}
 
 	// If upstream exists, get unpushed commits
