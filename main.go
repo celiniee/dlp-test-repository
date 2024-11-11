@@ -67,62 +67,64 @@ func DLPScan(projectID, text string) (bool, error) {
 		return false, fmt.Errorf("failed to inspect content: %v", err)
 	}
 
-	if len(resp.Result.Findings) > 0 {
-		fmt.Println("Sensitive data detected:")
-		for _, finding := range resp.Result.Findings {
-			fmt.Printf(" - %s\n", finding.InfoType.Name)
-		}
-		return true, nil
-	}
-	return false, nil
+	// If any findings are present, return true for sensitive data found
+	return len(resp.Result.Findings) > 0, nil
 }
 
-// ProxyCheck makes a POST request to a specified HTTP proxy with a custom "DLP-scanned" header and prints the status code
-func ProxyCheck(proxyURL string) error {
-	req, err := http.NewRequest("POST", proxyURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create HTTP request: %v", err)
+// SetGitExtraHeader sets the GIT_HTTP_EXTRAHEADER environment variable
+func SetGitExtraHeader() {
+	os.Setenv("GIT_HTTP_EXTRAHEADER", "DLP-Scanned: true")
+	fmt.Println("Set GIT_HTTP_EXTRAHEADER environment variable.")
+}
+
+// ClearGitExtraHeader clears the GIT_HTTP_EXTRAHEADER environment variable
+func ClearGitExtraHeader() {
+	os.Unsetenv("GIT_HTTP_EXTRAHEADER")
+	fmt.Println("Cleared GIT_HTTP_EXTRAHEADER environment variable.")
+}
+
+// RunGitPush performs the git push command
+func RunGitPush() error {
+	cmd := exec.Command("git", "push")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Run the command with the environment variable set
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git push failed: %v", err)
 	}
-
-	// Add custom header
-	req.Header.Set("DLP-scanned", "true")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send HTTP request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Print status code to see if the proxy allows the request
-	fmt.Printf("Proxy response status code: %d\n", resp.StatusCode)
 	return nil
 }
 
-// ScanFile reads file content, performs a DLP scan, and checks proxy if sensitive data is found
-func ScanFile(filename, projectID, proxyURL string) error {
+// ScanFile reads file content, performs a DLP scan, and runs Git push with an extra header if no sensitive data is found
+func ScanFile(filename, projectID string) error {
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("could not read file: %v", err)
 	}
 
+	// Perform DLP scan
 	foundSensitiveData, err := DLPScan(projectID, string(data))
 	if err != nil {
 		return err
 	}
-	if foundSensitiveData {
-		// Call ProxyCheck if sensitive data is found
-		if err := ProxyCheck(proxyURL); err != nil {
-			return fmt.Errorf("proxy check failed for file %s: %v", filename, err)
+
+	if !foundSensitiveData {
+		fmt.Printf("No sensitive data found in file %s. Proceeding with git push.\n", filename)
+		SetGitExtraHeader()
+		defer ClearGitExtraHeader() // Ensure the environment variable is cleared after use
+		if err := RunGitPush(); err != nil {
+			return err
 		}
-		return fmt.Errorf("sensitive data found in file %s", filename)
+	} else {
+		fmt.Printf("Sensitive data found in file %s. Skipping git push.\n", filename)
 	}
+
 	return nil
 }
 
 func main() {
 	projectID := "datalake-sea-eng-us-cert"
-	proxyURL := "https://10.13.48.89:80" // Replace with your proxy URL
 
 	files, err := GetChangedFiles()
 	if err != nil {
@@ -135,10 +137,10 @@ func main() {
 			continue
 		}
 		fmt.Printf("Scanning file: %s\n", file)
-		if err := ScanFile(file, projectID, proxyURL); err != nil {
+		if err := ScanFile(file, projectID); err != nil {
 			fmt.Printf("Scan error: %v\n", err)
 			os.Exit(1) // Exit with non-zero status to block push
 		}
 	}
-	fmt.Println("No sensitive data found.")
+	fmt.Println("DLP scan complete.")
 }
