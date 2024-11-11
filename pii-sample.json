@@ -1,14 +1,6 @@
 {
-    "ramp_id": "XY9876a6oPQikZA3u_qjNsjkUIdHhh",
-    "pid": "XY9283a6oPQikZA3u_qjNsjkUIdHhh",
-    "newid": "XY4321Test",
-    "id": "XY4321tyui",
-    "id2": "XY4321okmn",
-    "id3": "XY4321qazw",
     "first_name": "John",
     "last_name": "Doenut",
-    "email": "john@example.com",
-    "phone_number": "+1-234-567-8901",
     "address": {
       "street": "123 Main St",
       "city": "Anytown",
@@ -17,5 +9,4 @@
       "country": "USA"
     },
     "date_of_birth": "1990-01-01",
-    "ssn": "123-45-2930"
   }
