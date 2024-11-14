@@ -13,15 +13,12 @@ import (
 	dlppb "google.golang.org/genproto/googleapis/privacy/dlp/v2"
 )
 
-// GetUnpushedCommits retrieves all unpushed commits from the upstream branch to HEAD
 func GetUnpushedCommits() ([]string, error) {
-	// Check if the branch has an upstream set
 	checkUpstream := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	if err := checkUpstream.Run(); err != nil {
 		return nil, fmt.Errorf("no upstream branch set for the current branch. Please set upstream before pushing.")
 	}
 
-	// If upstream exists, get unpushed commits
 	cmd := exec.Command("git", "rev-list", "--oneline", "@{u}..HEAD")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -38,7 +35,6 @@ func GetUnpushedCommits() ([]string, error) {
 	return commits, nil
 }
 
-// GetChangedFilesInCommit retrieves files changed in a specific commit
 func GetChangedFilesInCommit(commit string) ([]string, error) {
 	cmd := exec.Command("git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit)
 	output, err := cmd.Output()
@@ -49,7 +45,6 @@ func GetChangedFilesInCommit(commit string) ([]string, error) {
 	return files, nil
 }
 
-// DLPScan scans a given text for sensitive data using Google Cloud DLP
 func DLPScan(projectID, text string) (bool, error) {
 	ctx := context.Background()
 	client, err := dlp.NewClient(ctx)
@@ -95,7 +90,7 @@ func DLPScan(projectID, text string) (bool, error) {
 	return len(resp.Result.Findings) > 0, nil
 }
 
-// ScanCommit checks each file in a specific commit for sensitive data
+// Check each file in a specific commit for sensitive data
 func ScanCommit(commit, projectID string, flaggedFiles map[string]bool) error {
 	files, err := GetChangedFilesInCommit(commit)
 	if err != nil {
@@ -121,7 +116,7 @@ func ScanCommit(commit, projectID string, flaggedFiles map[string]bool) error {
 	return nil
 }
 
-// ScanFinalState scans the latest version of flagged files at HEAD for sensitive data
+// Scan the latest version of flagged files for sensitive data
 func ScanFinalState(projectID string, flaggedFiles map[string]bool) (bool, error) {
 	for file := range flaggedFiles {
 		data, err := ioutil.ReadFile(file)
@@ -144,7 +139,6 @@ func ScanFinalState(projectID string, flaggedFiles map[string]bool) (bool, error
 func main() {
 	projectID := "datalake-sea-eng-us-cert"
 
-	// Set the GIT_HTTP_EXTRAHEADER environment variable
 	os.Setenv("GIT_HTTP_EXTRAHEADER", "DLP-Scanned: true")
 	defer os.Unsetenv("GIT_HTTP_EXTRAHEADER") // Ensure it is unset after execution
 
@@ -173,7 +167,7 @@ func main() {
 		os.Exit(1)
 	}
 	if foundSensitiveData {
-		os.Exit(1) // Exit if sensitive data is found in the final state
+		os.Exit(1)
 	}
 
 	fmt.Println("DLP scan complete, no sensitive data found.")
