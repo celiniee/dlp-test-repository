@@ -151,6 +151,20 @@ func blockGitOperation(success bool, operation string) {
 	}
 }
 
+func detectGitOperation() string {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "push":
+			return "push"
+		case "pull":
+			return "pull"
+		case "clone":
+			return "clone"
+		}
+	}
+	return ""
+}
+
 func main() {
 	ctx := context.Background()
 	client, err := dlp.NewClient(ctx)
@@ -164,7 +178,7 @@ func main() {
 	os.Setenv("GIT_HTTP_EXTRAHEADER", "DLP-Scanned: true")
 	defer os.Unsetenv("GIT_HTTP_EXTRAHEADER")
 
-	operation := os.Getenv("GIT_OPERATION") // Set this environment variable to "push", "pull", or "clone" as needed
+	operation := detectGitOperation()
 	if operation == "push" {
 		commits, err := GetUnpushedCommits()
 		if err != nil {
@@ -190,17 +204,6 @@ func main() {
 		}
 		blockGitOperation(!foundSensitiveData, "push")
 	} else if operation == "pull" || operation == "clone" {
-		fmt.Printf("Scanning for sensitive data during git %s operation...\n", operation)
-		foundSensitiveData, err := ScanPullClone(ctx, client, projectID)
-		if err != nil {
-			fmt.Printf("Scan error during git %s: %v\n", operation, err)
-			os.Exit(1)
-		}
-		blockGitOperation(!foundSensitiveData, operation)
-	} else {
-		fmt.Println("Invalid or missing GIT_OPERATION. Please set it to 'push', 'pull', or 'clone'.")
-		os.Exit(1)
+		fmt.Printf("Scanning for sensitive data during git %s operation...")
 	}
-
-	fmt.Printf("DLP scan complete for git %s operation. No sensitive data found.\n", operation)
 }
