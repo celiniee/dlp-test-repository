@@ -5,11 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
 
-	dlp "cloud.google.com/go/dlp/apiv2"
+	"cloud.google.com/go/dlp/apiv2"
 	dlppb "google.golang.org/genproto/googleapis/privacy/dlp/v2"
 )
 
@@ -45,41 +46,21 @@ func GetChangedFilesInCommit(commit string) ([]string, error) {
 	return files, nil
 }
 
-func DLPScan(projectID, text string) (bool, error) {
-	ctx := context.Background()
-	client, err := dlp.NewClient(ctx)
-	if err != nil {
-		return false, fmt.Errorf("failed to create DLP client: %v", err)
-	}
-	defer client.Close()
-
-	customRegexPattern := "XY[0-9]{4}.*"
-	customInfoType := &dlppb.CustomInfoType{
-		InfoType: &dlppb.InfoType{Name: "RampID"},
-		Type: &dlppb.CustomInfoType_Regex_{Regex: &dlppb.CustomInfoType_Regex{
-			Pattern: customRegexPattern,
-		}},
-		Likelihood: dlppb.Likelihood_POSSIBLE,
-	}
-
-	inspectConfig := &dlppb.InspectConfig{
-		InfoTypes: []*dlppb.InfoType{
-			{Name: "EMAIL_ADDRESS"},
-			{Name: "PHONE_NUMBER"},
-			{Name: "US_SOCIAL_SECURITY_NUMBER"},
-		},
-		CustomInfoTypes: []*dlppb.CustomInfoType{customInfoType},
-		IncludeQuote:    true,
-	}
-
-	contentItem := &dlppb.ContentItem{
-		DataItem: &dlppb.ContentItem_Value{Value: text},
-	}
-
+func DLPScan(ctx context.Context, client *dlp.Client, projectID, text string) (bool, error) {
 	req := &dlppb.InspectContentRequest{
-		Parent:        fmt.Sprintf("projects/%s/locations/global", projectID),
-		Item:          contentItem,
-		InspectConfig: inspectConfig,
+		Parent: fmt.Sprintf("projects/%s/locations/global", projectID),
+		Item: &dlppb.ContentItem{
+			DataItem: &dlppb.ContentItem_Value{
+				Value: text,
+			},
+		},
+		InspectConfig: &dlppb.InspectConfig{
+			InfoTypes: []*dlppb.InfoType{
+				{Name: "CREDIT_CARD_NUMBER"},
+				{Name: "EMAIL_ADDRESS"},
+				{Name: "PHONE_NUMBER"},
+			},
+		},
 	}
 
 	resp, err := client.InspectContent(ctx, req)
@@ -87,11 +68,14 @@ func DLPScan(projectID, text string) (bool, error) {
 		return false, fmt.Errorf("failed to inspect content: %v", err)
 	}
 
-	return len(resp.Result.Findings) > 0, nil
+	for _, finding := range resp.Result.Findings {
+		log.Printf("Found sensitive data: %v", finding.InfoType.Name)
+	}
+
+	return len(resp.Result.Findings) == 0, nil
 }
 
-// Check each file in a specific commit for sensitive data
-func ScanCommit(commit, projectID string, flaggedFiles map[string]bool) error {
+func ScanCommit(ctx context.Context, client *dlp.Client, commit, projectID string, flaggedFiles map[string]bool) error {
 	files, err := GetChangedFilesInCommit(commit)
 	if err != nil {
 		return err
@@ -103,11 +87,11 @@ func ScanCommit(commit, projectID string, flaggedFiles map[string]bool) error {
 		if err != nil {
 			return fmt.Errorf("failed to get content of file %s in commit %s: %v", file, commit, err)
 		}
-		foundSensitiveData, err := DLPScan(projectID, string(output))
+		foundSensitiveData, err := DLPScan(ctx, client, projectID, string(output))
 		if err != nil {
 			return err
 		}
-		if foundSensitiveData {
+		if !foundSensitiveData {
 			flaggedFiles[file] = true
 			fmt.Printf("Sensitive data found in file %s in commit %s.\n", file, commit)
 		}
@@ -116,18 +100,17 @@ func ScanCommit(commit, projectID string, flaggedFiles map[string]bool) error {
 	return nil
 }
 
-// Scan the latest version of flagged files for sensitive data
-func ScanFinalState(projectID string, flaggedFiles map[string]bool) (bool, error) {
+func ScanFinalState(ctx context.Context, client *dlp.Client, projectID string, flaggedFiles map[string]bool) (bool, error) {
 	for file := range flaggedFiles {
 		data, err := ioutil.ReadFile(file)
 		if err != nil {
 			return false, fmt.Errorf("could not read file %s: %v", file, err)
 		}
-		foundSensitiveData, err := DLPScan(projectID, string(data))
+		foundSensitiveData, err := DLPScan(ctx, client, projectID, string(data))
 		if err != nil {
 			return false, err
 		}
-		if foundSensitiveData {
+		if !foundSensitiveData {
 			fmt.Printf("Sensitive data found in final state of file %s. Aborting push.\n", file)
 			return true, nil
 		}
@@ -136,39 +119,88 @@ func ScanFinalState(projectID string, flaggedFiles map[string]bool) (bool, error
 	return false, nil
 }
 
+func ScanPullClone(ctx context.Context, client *dlp.Client, projectID string) (bool, error) {
+	cmd := exec.Command("git", "diff", "--name-only", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("failed to get changed files during pull or clone: %v", err)
+	}
+	files := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	for _, file := range files {
+		data, err := ioutil.ReadFile(file)
+		if err != nil {
+			return false, fmt.Errorf("could not read file %s during pull or clone: %v", file, err)
+		}
+		foundSensitiveData, err := DLPScan(ctx, client, projectID, string(data))
+		if err != nil {
+			return false, err
+		}
+		if !foundSensitiveData {
+			fmt.Printf("Sensitive data found in file %s during pull or clone. Aborting operation.\n", file)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func blockGitOperation(success bool, operation string) {
+	if !success {
+		log.Fatalf("Sensitive data detected. Blocking git %s operation.", operation)
+		os.Exit(1)
+	}
+}
+
 func main() {
+	ctx := context.Background()
+	client, err := dlp.NewClient(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create DLP client: %v", err)
+	}
+	defer client.Close()
+
 	projectID := "datalake-sea-eng-us-cert"
 
 	os.Setenv("GIT_HTTP_EXTRAHEADER", "DLP-Scanned: true")
-	defer os.Unsetenv("GIT_HTTP_EXTRAHEADER") // Ensure it is unset after execution
+	defer os.Unsetenv("GIT_HTTP_EXTRAHEADER")
 
-	commits, err := GetUnpushedCommits()
-	if err != nil {
-		fmt.Printf("Error retrieving unpushed commits: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Step 1: Scan each commit in the range to track files with sensitive data
-	flaggedFiles := make(map[string]bool)
-	for _, commit := range commits {
-		fmt.Printf("Scanning commit: %s\n", commit)
-		err := ScanCommit(commit, projectID, flaggedFiles)
+	operation := os.Getenv("GIT_OPERATION") // Set this environment variable to "push", "pull", or "clone" as needed
+	if operation == "push" {
+		commits, err := GetUnpushedCommits()
 		if err != nil {
-			fmt.Printf("Scan error in commit %s: %v\n", commit, err)
+			fmt.Printf("Error retrieving unpushed commits: %v\n", err)
 			os.Exit(1)
 		}
-	}
 
-	// Step 2: Perform a final scan on the latest file states at HEAD for flagged files only
-	fmt.Println("Performing final DLP scan on latest flagged file states...")
-	foundSensitiveData, err := ScanFinalState(projectID, flaggedFiles)
-	if err != nil {
-		fmt.Printf("Final state scan error: %v\n", err)
+		flaggedFiles := make(map[string]bool)
+		for _, commit := range commits {
+			fmt.Printf("Scanning commit: %s\n", commit)
+			err := ScanCommit(ctx, client, commit, projectID, flaggedFiles)
+			if err != nil {
+				fmt.Printf("Scan error in commit %s: %v\n", commit, err)
+				os.Exit(1)
+			}
+		}
+
+		fmt.Println("Performing final DLP scan on flagged files...")
+		foundSensitiveData, err := ScanFinalState(ctx, client, projectID, flaggedFiles)
+		if err != nil {
+			fmt.Printf("Final state scan error: %v\n", err)
+			os.Exit(1)
+		}
+		blockGitOperation(!foundSensitiveData, "push")
+	} else if operation == "pull" || operation == "clone" {
+		fmt.Printf("Scanning for sensitive data during git %s operation...\n", operation)
+		foundSensitiveData, err := ScanPullClone(ctx, client, projectID)
+		if err != nil {
+			fmt.Printf("Scan error during git %s: %v\n", operation, err)
+			os.Exit(1)
+		}
+		blockGitOperation(!foundSensitiveData, operation)
+	} else {
+		fmt.Println("Invalid or missing GIT_OPERATION. Please set it to 'push', 'pull', or 'clone'.")
 		os.Exit(1)
 	}
-	if foundSensitiveData {
-		os.Exit(1)
-	}
 
-	fmt.Println("DLP scan complete, no sensitive data found.")
+	fmt.Printf("DLP scan complete for git %s operation. No sensitive data found.\n", operation)
 }
