@@ -2,6 +2,7 @@
   "RampID":"XY43213948Testing",
   "first_name": "John",
   "last_name": "Doenut",
+  "email": "joenuts@gmail.com",
   "address": {
     "street": "123 Main St",
     "city": "Anytown",
