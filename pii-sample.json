@@ -10,5 +10,6 @@
     "zip_code": "90210",
     "country": "USA"
   },
+  "phone_number": "+1234567890",
   "date_of_birth": "1990-01-01"
 }
